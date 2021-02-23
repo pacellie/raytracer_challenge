@@ -74,8 +74,14 @@ impl Element {
     pub fn composite(
         transform: Matrix,
         material: Option<Material>,
+        kind: GroupKind,
         children: Vec<Element>,
     ) -> Element {
+        match kind {
+            GroupKind::Aggregation => (),
+            _ => assert!(children.len() == 2),
+        }
+
         let inv = transform.inverse();
         let inv_tsp = inv.transpose();
 
@@ -84,7 +90,11 @@ impl Element {
             bbox = bbox.union(&child.bbox());
         }
 
-        let mut composite = Element::Composite(Group { bbox, children });
+        let mut composite = Element::Composite(Group {
+            kind,
+            bbox,
+            children,
+        });
         composite.propagate_inverses(transform, inv, inv_tsp, material);
 
         composite
@@ -139,12 +149,39 @@ impl Element {
             Element::Primitive(shape) => shape.bbox,
         }
     }
+
+    pub fn includes(&self, shape: &Shape) -> bool {
+        match self {
+            Element::Composite(group) => group.includes(shape),
+            Element::Primitive(s) => *s == *shape,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum GroupKind {
+    Union,
+    Intersection,
+    Difference,
+    Aggregation,
+}
+
+impl GroupKind {
+    pub fn allows_intersection(&self, left_hit: bool, in_left: bool, in_right: bool) -> bool {
+        match self {
+            GroupKind::Union => (left_hit && !in_right) || (!left_hit && !in_left),
+            GroupKind::Intersection => (left_hit && in_right) || (!left_hit && in_left),
+            GroupKind::Difference => (left_hit && !in_right) || (!left_hit && in_left),
+            GroupKind::Aggregation => true,
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct Group {
-    bbox: BoundingBox,
-    children: Vec<Element>,
+    pub kind: GroupKind,
+    pub bbox: BoundingBox,
+    pub children: Vec<Element>,
 }
 
 impl Approx<Group> for Group {
@@ -186,12 +223,24 @@ impl Approx<Group> for Group {
 // }
 
 impl Group {
+    pub fn includes(&self, shape: &Shape) -> bool {
+        self.children.iter().any(|element| element.includes(shape))
+    }
+
     pub fn intersect<'a>(&'a self, ray: Ray, intersections: &mut Intersections<'a>) {
         // intersect_bbox(&self.bbox, &DEBUG, ray, intersections);
 
         if self.bbox.intersects(ray) {
             for child in &self.children {
                 child.intersect(ray, intersections);
+            }
+        }
+
+        match self.kind {
+            GroupKind::Aggregation => (),
+            _ => {
+                intersections.sort();
+                intersections.filter_by_group(self);
             }
         }
     }
@@ -1392,7 +1441,7 @@ mod tests {
 
     #[test]
     fn ray_group_miss() {
-        let group = Element::composite(Matrix::id(), None, vec![]);
+        let group = Element::composite(Matrix::id(), None, GroupKind::Aggregation, vec![]);
         let ray = Ray {
             origin: Vector::point(0.0, 0.0, 0.0),
             direction: Vector::vector(0.0, 0.0, 1.0),
@@ -1428,6 +1477,7 @@ mod tests {
         let group = Element::composite(
             Matrix::id(),
             None,
+            GroupKind::Aggregation,
             vec![
                 Element::Primitive(sphere1),
                 Element::Primitive(sphere2),
@@ -1462,7 +1512,12 @@ mod tests {
             transform: Matrix::translation(5.0, 0.0, 0.0),
             ..ShapeArgs::default()
         });
-        let group = Element::composite(Matrix::scaling(2.0, 2.0, 2.0), None, vec![sphere]);
+        let group = Element::composite(
+            Matrix::scaling(2.0, 2.0, 2.0),
+            None,
+            GroupKind::Aggregation,
+            vec![sphere],
+        );
         let ray = Ray {
             origin: Vector::point(10.0, 0.0, -10.0),
             direction: Vector::vector(0.0, 0.0, 1.0),
@@ -1480,10 +1535,16 @@ mod tests {
             transform: Matrix::translation(5.0, 0.0, 0.0),
             ..ShapeArgs::default()
         });
-        let group2 = Element::composite(Matrix::scaling(1.0, 2.0, 3.0), None, vec![sphere]);
+        let group2 = Element::composite(
+            Matrix::scaling(1.0, 2.0, 3.0),
+            None,
+            GroupKind::Aggregation,
+            vec![sphere],
+        );
         let group1 = Element::composite(
             Matrix::rotation_y(std::f64::consts::PI / 2.0),
             None,
+            GroupKind::Aggregation,
             vec![group2],
         );
 
@@ -1514,12 +1575,102 @@ mod tests {
             2.0,
             true,
         );
-        let group = Element::composite(Matrix::id(), None, vec![sphere, cylinder]);
+        let group = Element::composite(
+            Matrix::id(),
+            None,
+            GroupKind::Aggregation,
+            vec![sphere, cylinder],
+        );
         let bbox = group.bbox();
 
         assert!(
             bbox.min.approx(&Vector::point(-4.5, -3.0, -5.0))
                 && bbox.max.approx(&Vector::point(4.0, 7.0, 4.5))
+        )
+    }
+
+    #[test_case(GroupKind::Union, true , true , true , false ; "union 1")]
+    #[test_case(GroupKind::Union, true , true , false, true  ; "union 2")]
+    #[test_case(GroupKind::Union, true , false, true , false ; "union 3")]
+    #[test_case(GroupKind::Union, true , false, false, true  ; "union 4")]
+    #[test_case(GroupKind::Union, false, true , true , false ; "union 5")]
+    #[test_case(GroupKind::Union, false, true , false, false ; "union 6")]
+    #[test_case(GroupKind::Union, false, false, true , true  ; "union 7")]
+    #[test_case(GroupKind::Union, false, false, false, true  ; "union 8")]
+    #[test_case(GroupKind::Intersection, true , true , true , true  ; "intersection 1")]
+    #[test_case(GroupKind::Intersection, true , true , false, false ; "intersection 2")]
+    #[test_case(GroupKind::Intersection, true , false, true , true  ; "intersection 3")]
+    #[test_case(GroupKind::Intersection, true , false, false, false ; "intersection 4")]
+    #[test_case(GroupKind::Intersection, false, true , true , true  ; "intersection 5")]
+    #[test_case(GroupKind::Intersection, false, true , false, true  ; "intersection 6")]
+    #[test_case(GroupKind::Intersection, false, false, true , false ; "intersection 7")]
+    #[test_case(GroupKind::Intersection, false, false, false, false ; "intersection 8")]
+    #[test_case(GroupKind::Difference, true , true , true , false ; "difference 1")]
+    #[test_case(GroupKind::Difference, true , true , false, true  ; "difference 2")]
+    #[test_case(GroupKind::Difference, true , false, true , false ; "difference 3")]
+    #[test_case(GroupKind::Difference, true , false, false, true  ; "difference 4")]
+    #[test_case(GroupKind::Difference, false, true , true , true  ; "difference 5")]
+    #[test_case(GroupKind::Difference, false, true , false, true  ; "difference 6")]
+    #[test_case(GroupKind::Difference, false, false, true , false ; "difference 7")]
+    #[test_case(GroupKind::Difference, false, false, false, false ; "difference 8")]
+    fn allowed_intersection(
+        kind: GroupKind,
+        left_hit: bool,
+        in_left: bool,
+        in_right: bool,
+        expected: bool,
+    ) {
+        assert!(kind
+            .allows_intersection(left_hit, in_left, in_right)
+            .approx(&expected))
+    }
+
+    #[test]
+    fn ray_csg_miss() {
+        let sphere = Element::sphere(ShapeArgs::default());
+        let cube = Element::cube(ShapeArgs::default());
+        let group = Element::composite(Matrix::id(), None, GroupKind::Union, vec![sphere, cube]);
+        let ray = Ray {
+            origin: Vector::point(0.0, 2.0, -5.0),
+            direction: Vector::vector(0.0, 0.0, 1.0),
+        };
+        let mut intersections = Intersections::new();
+        group.intersect(ray, &mut intersections);
+        let is: Vec<Intersection> = intersections.into_iter().collect();
+
+        assert!(is.len() == 0)
+    }
+
+    #[test]
+    fn ray_csg_hit() {
+        let sphere1 = Shape::sphere(ShapeArgs::default());
+        let sphere2 = Shape::sphere(ShapeArgs {
+            transform: Matrix::translation(0.0, 0.0, 0.5),
+            ..ShapeArgs::default()
+        });
+        let group = Element::composite(
+            Matrix::id(),
+            None,
+            GroupKind::Union,
+            vec![
+                Element::Primitive(sphere1.clone()),
+                Element::Primitive(sphere2.clone()),
+            ],
+        );
+        let ray = Ray {
+            origin: Vector::point(0.0, 0.0, -5.0),
+            direction: Vector::vector(0.0, 0.0, 1.0),
+        };
+        let mut intersections = Intersections::new();
+        group.intersect(ray, &mut intersections);
+        let is: Vec<Intersection> = intersections.into_iter().collect();
+
+        assert!(
+            is.len() == 2
+                && is[0].t.approx(&4.0)
+                && is[0].shape == &sphere1
+                && is[1].t.approx(&6.5)
+                && is[1].shape == &sphere2
         )
     }
 

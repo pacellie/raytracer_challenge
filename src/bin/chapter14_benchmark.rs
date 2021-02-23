@@ -4,7 +4,7 @@ use raytracer::image::Image;
 use raytracer::light::PointLight;
 use raytracer::linalg::{Matrix, Vector};
 use raytracer::material::{Material, Pattern};
-use raytracer::shape::{Element, ShapeArgs};
+use raytracer::shape::{Element, GroupKind, ShapeArgs};
 use raytracer::world::World;
 
 use std::f64::consts::PI;
@@ -63,6 +63,7 @@ fn construct_world() -> (Camera, World) {
                 let group = Element::composite(
                     Matrix::translation(x as f64 * offset, y as f64 * offset, z as f64 * offset),
                     None,
+                    GroupKind::Aggregation,
                     sphere_block(n, h),
                 );
                 spheres.push(group);
@@ -81,6 +82,7 @@ fn construct_world() -> (Camera, World) {
             ),
             ..Material::default()
         }),
+        GroupKind::Aggregation,
         spheres,
     ));
 

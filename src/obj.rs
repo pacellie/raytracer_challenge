@@ -241,6 +241,7 @@ impl<'a> ObjParser<'a> {
                 elements.push(Element::composite(
                     transform,
                     Some(material.clone()),
+                    GroupKind::Aggregation,
                     children,
                 ));
             }
@@ -251,7 +252,7 @@ impl<'a> ObjParser<'a> {
             if elements.len() == 1 {
                 elements.pop().unwrap()
             } else {
-                Element::composite(Matrix::id(), None, elements)
+                Element::composite(Matrix::id(), None, GroupKind::Aggregation, elements)
             },
         ))
     }
@@ -628,15 +629,18 @@ mod tests {
         let expected1 = Element::composite(
             Matrix::id(),
             None,
+            GroupKind::Aggregation,
             vec![
                 Element::composite(
                     Matrix::id(),
                     None,
+                    GroupKind::Aggregation,
                     vec![Element::triangle(ShapeArgs::default(), v1, v2, v3)],
                 ),
                 Element::composite(
                     Matrix::id(),
                     None,
+                    GroupKind::Aggregation,
                     vec![Element::triangle(ShapeArgs::default(), v1, v3, v4)],
                 ),
             ],
@@ -645,15 +649,18 @@ mod tests {
         let expected2 = Element::composite(
             Matrix::id(),
             None,
+            GroupKind::Aggregation,
             vec![
                 Element::composite(
                     Matrix::id(),
                     None,
+                    GroupKind::Aggregation,
                     vec![Element::triangle(ShapeArgs::default(), v1, v3, v4)],
                 ),
                 Element::composite(
                     Matrix::id(),
                     None,
+                    GroupKind::Aggregation,
                     vec![Element::triangle(ShapeArgs::default(), v1, v2, v3)],
                 ),
             ],

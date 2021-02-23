@@ -4,7 +4,7 @@ use raytracer::image::Image;
 use raytracer::light::PointLight;
 use raytracer::linalg::{Matrix, Vector};
 use raytracer::material::{Material, Pattern};
-use raytracer::shape::{Element, ShapeArgs};
+use raytracer::shape::{Element, GroupKind, ShapeArgs};
 use raytracer::world::World;
 
 use std::f64::consts::PI;
@@ -31,7 +31,12 @@ fn leg(transform: Matrix) -> Element {
         false,
     );
 
-    Element::composite(transform, None, vec![sphere, cylinder])
+    Element::composite(
+        transform,
+        None,
+        GroupKind::Aggregation,
+        vec![sphere, cylinder],
+    )
 }
 
 fn cap(transform: Matrix) -> Element {
@@ -51,7 +56,7 @@ fn cap(transform: Matrix) -> Element {
         ))
     }
 
-    Element::composite(transform, None, cones)
+    Element::composite(transform, None, GroupKind::Aggregation, cones)
 }
 
 fn wacky(transform: Matrix, material: Material) -> Element {
@@ -66,7 +71,7 @@ fn wacky(transform: Matrix, material: Material) -> Element {
         Matrix::rotation_x(PI) * Matrix::translation(0.0, 1.0, 0.0)
     ));
 
-    Element::composite(transform, Some(material), elements)
+    Element::composite(transform, Some(material), GroupKind::Aggregation, elements)
 }
 
 fn construct_world() -> (Camera, World) {

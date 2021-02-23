@@ -1,7 +1,7 @@
 use crate::config::EPSILON;
 use crate::linalg::Vector;
 use crate::ray::Ray;
-use crate::shape::Shape;
+use crate::shape::{Group, Shape};
 
 use std::collections::HashSet;
 
@@ -154,9 +154,35 @@ impl<'a> Intersections<'a> {
         self.intersections.push(intersection);
     }
 
+    pub fn clear(&mut self) {
+        self.intersections.clear();
+    }
+
     pub fn sort(&mut self) {
         self.intersections
             .sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap())
+    }
+
+    pub fn filter_by_group(&mut self, group: &Group) {
+        let mut in_left = false;
+        let mut in_right = false;
+
+        let mut result = vec![];
+        for intersection in &self.intersections {
+            let left_hit = group.children[0].includes(intersection.shape);
+
+            if group.kind.allows_intersection(left_hit, in_left, in_right) {
+                result.push(*intersection);
+            }
+
+            if left_hit {
+                in_left = !in_left;
+            } else {
+                in_right = !in_right;
+            }
+        }
+
+        self.intersections = result;
     }
 
     pub fn hit(&self) -> Option<Intersection> {
@@ -172,10 +198,13 @@ mod tests {
     use super::*;
 
     use crate::approx::Approx;
+    use crate::bounding_box::BoundingBox;
     use crate::linalg::Matrix;
     use crate::material::consts::transparency::GLASS;
     use crate::material::Material;
-    use crate::shape::ShapeArgs;
+    use crate::shape::{Element, GroupKind, ShapeArgs};
+
+    use test_case::test_case;
 
     #[test]
     fn aggregating_intersections() {
@@ -703,5 +732,59 @@ mod tests {
         let reflectance = state.reflectance;
 
         assert!(reflectance.approx(&0.48873))
+    }
+
+    #[test_case(GroupKind::Union       , 0, 3 ; "union"       )]
+    #[test_case(GroupKind::Intersection, 1, 2 ; "intersection")]
+    #[test_case(GroupKind::Difference  , 0, 1 ; "difference"  )]
+    fn filter_by_group(kind: GroupKind, i1: usize, i2: usize) {
+        let sphere = Shape::sphere(ShapeArgs::default());
+        let cube = Shape::cube(ShapeArgs::default());
+        let group = Group {
+            kind,
+            bbox: BoundingBox::empty(),
+            children: vec![
+                Element::Primitive(sphere.clone()),
+                Element::Primitive(cube.clone()),
+            ],
+        };
+
+        let is1 = vec![
+            Intersection {
+                t: 1.0,
+                shape: &sphere,
+                u: None,
+                v: None,
+            },
+            Intersection {
+                t: 2.0,
+                shape: &cube,
+                u: None,
+                v: None,
+            },
+            Intersection {
+                t: 3.0,
+                shape: &sphere,
+                u: None,
+                v: None,
+            },
+            Intersection {
+                t: 4.0,
+                shape: &cube,
+                u: None,
+                v: None,
+            },
+        ];
+
+        let mut intersections = Intersections::new();
+        intersections.insert(is1[0]);
+        intersections.insert(is1[1]);
+        intersections.insert(is1[2]);
+        intersections.insert(is1[3]);
+
+        intersections.filter_by_group(&group);
+        let is2: Vec<Intersection> = intersections.into_iter().collect();
+
+        assert!(is2.len() == 2 && is2[0] == is1[i1] && is2[1] == is1[i2])
     }
 }

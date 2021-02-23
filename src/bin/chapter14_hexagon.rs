@@ -5,7 +5,7 @@ use raytracer::light::PointLight;
 use raytracer::linalg::{Matrix, Vector};
 use raytracer::material::{Material, Pattern};
 use raytracer::noise::Noise;
-use raytracer::shape::{Element, ShapeArgs};
+use raytracer::shape::{Element, GroupKind, ShapeArgs};
 use raytracer::world::World;
 
 use std::f64::consts::PI;
@@ -36,7 +36,12 @@ fn hexagon_edge() -> Element {
 }
 
 fn hexagon_side(transform: Matrix) -> Element {
-    Element::composite(transform, None, vec![hexagon_corner(), hexagon_edge()])
+    Element::composite(
+        transform,
+        None,
+        GroupKind::Aggregation,
+        vec![hexagon_corner(), hexagon_edge()],
+    )
 }
 
 fn hexagon() -> Element {
@@ -57,7 +62,7 @@ fn hexagon() -> Element {
         sides.push(hexagon_side(Matrix::rotation_y(n as f64 * PI / 3.0)));
     }
 
-    Element::composite(Matrix::id(), Some(material), sides)
+    Element::composite(Matrix::id(), Some(material), GroupKind::Aggregation, sides)
 }
 
 fn construct_world() -> (Camera, World) {
