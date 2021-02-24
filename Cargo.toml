@@ -5,8 +5,8 @@ authors = ["Martin Rau <martin.rau@tum.de>"]
 edition = "2018"
 
 [dependencies]
-
 rayon = "1.5"
+crossbeam = "0.8.0"
 nom = "6.1.0"
 lazy_static = "1.4.0"
 

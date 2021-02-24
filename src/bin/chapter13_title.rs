@@ -269,7 +269,7 @@ fn main() {
     // Render image
     let now = Instant::now();
     print!("Rendering image ...");
-    let image = Image::par_render(camera, &world);
+    let image = Image::par_render(&camera, &world);
     println!(" {} ms.", now.elapsed().as_millis());
 
     // Write image to disk

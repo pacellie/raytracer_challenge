@@ -4,7 +4,7 @@ use crate::approx::Approx;
 use crate::bounding_box::BoundingBox;
 use crate::color::Color;
 use crate::config::EPSILON;
-use crate::intersection::{Intersection, Intersections};
+use crate::intersection::Intersection;
 use crate::light::PointLight;
 use crate::linalg::{Matrix, Vector};
 use crate::material::Material;
@@ -136,7 +136,7 @@ impl Element {
         Element::Primitive(Shape::smooth_triangle(args, p1, p2, p3, n1, n2, n3))
     }
 
-    pub fn intersect<'a>(&'a self, ray: Ray, intersections: &mut Intersections<'a>) {
+    pub fn intersect<'a>(&'a self, ray: Ray, intersections: &mut Vec<Intersection<'a>>) {
         match self {
             Element::Composite(group) => group.intersect(ray, intersections),
             Element::Primitive(shape) => shape.intersect(ray, intersections),
@@ -227,7 +227,25 @@ impl Group {
         self.children.iter().any(|element| element.includes(shape))
     }
 
-    pub fn intersect<'a>(&'a self, ray: Ray, intersections: &mut Intersections<'a>) {
+    pub fn filter(&self, intersections: &mut Vec<Intersection>) {
+        let mut in_left = false;
+        let mut in_right = false;
+
+        intersections.retain(|intersection| {
+            let left_hit = self.children[0].includes(intersection.shape);
+            let keep = self.kind.allows_intersection(left_hit, in_left, in_right);
+
+            if left_hit {
+                in_left = !in_left;
+            } else {
+                in_right = !in_right;
+            }
+
+            keep
+        })
+    }
+
+    pub fn intersect<'a>(&'a self, ray: Ray, intersections: &mut Vec<Intersection<'a>>) {
         // intersect_bbox(&self.bbox, &DEBUG, ray, intersections);
 
         if self.bbox.intersects(ray) {
@@ -239,8 +257,8 @@ impl Group {
         match self.kind {
             GroupKind::Aggregation => (),
             _ => {
-                intersections.sort();
-                intersections.filter_by_group(self);
+                Intersection::sort(intersections);
+                self.filter(intersections);
             }
         }
     }
@@ -388,7 +406,7 @@ impl Shape {
         )
     }
 
-    pub fn intersect<'a>(&'a self, ray: Ray, intersections: &mut Intersections<'a>) {
+    pub fn intersect<'a>(&'a self, ray: Ray, intersections: &mut Vec<Intersection<'a>>) {
         let ray = ray.transform(self.transform_inv);
         self.geometry.intersect(self, ray, intersections)
     }
@@ -566,7 +584,7 @@ impl Approx<Geometry> for Geometry {
 }
 
 impl Geometry {
-    fn intersect_sphere<'a>(shape: &'a Shape, ray: Ray, intersections: &mut Intersections<'a>) {
+    fn intersect_sphere<'a>(shape: &'a Shape, ray: Ray, intersections: &mut Vec<Intersection<'a>>) {
         let sphere_to_ray = ray.origin - Vector::point(0.0, 0.0, 0.0);
 
         let a = ray.direction.dot(ray.direction);
@@ -582,13 +600,13 @@ impl Geometry {
         let t0 = (-b - discriminant.sqrt()) / (2.0 * a);
         let t1 = (-b + discriminant.sqrt()) / (2.0 * a);
 
-        intersections.insert(Intersection {
+        intersections.push(Intersection {
             t: t0,
             shape,
             u: None,
             v: None,
         });
-        intersections.insert(Intersection {
+        intersections.push(Intersection {
             t: t1,
             shape,
             u: None,
@@ -596,12 +614,12 @@ impl Geometry {
         });
     }
 
-    fn intersect_plane<'a>(shape: &'a Shape, ray: Ray, intersections: &mut Intersections<'a>) {
+    fn intersect_plane<'a>(shape: &'a Shape, ray: Ray, intersections: &mut Vec<Intersection<'a>>) {
         if ray.direction.y.approx(&0.0) {
             return;
         }
 
-        intersections.insert(Intersection {
+        intersections.push(Intersection {
             t: -ray.origin.y / ray.direction.y,
             shape,
             u: None,
@@ -629,7 +647,7 @@ impl Geometry {
         }
     }
 
-    fn intersect_cube<'a>(shape: &'a Shape, ray: Ray, intersections: &mut Intersections<'a>) {
+    fn intersect_cube<'a>(shape: &'a Shape, ray: Ray, intersections: &mut Vec<Intersection<'a>>) {
         let (x_t_min, x_t_max) =
             Geometry::intersect_cube_axis(ray.origin.x, ray.direction.x, -1.0, 1.0);
         let (y_t_min, y_t_max) =
@@ -641,13 +659,13 @@ impl Geometry {
         let t_max = x_t_max.min(y_t_max).min(z_t_max);
 
         if t_min <= t_max {
-            intersections.insert(Intersection {
+            intersections.push(Intersection {
                 t: t_min,
                 shape,
                 u: None,
                 v: None,
             });
-            intersections.insert(Intersection {
+            intersections.push(Intersection {
                 t: t_max,
                 shape,
                 u: None,
@@ -671,7 +689,7 @@ impl Geometry {
         min_radius: f64,
         max_radius: f64,
         closed: bool,
-        intersections: &mut Intersections<'a>,
+        intersections: &mut Vec<Intersection<'a>>,
     ) {
         if !closed || ray.direction.y.approx(&0.0) {
             return;
@@ -679,7 +697,7 @@ impl Geometry {
 
         let t = (min - ray.origin.y) / ray.direction.y;
         if Geometry::intersects_cap(ray, t, min_radius) {
-            intersections.insert(Intersection {
+            intersections.push(Intersection {
                 t,
                 shape,
                 u: None,
@@ -689,7 +707,7 @@ impl Geometry {
 
         let t = (max - ray.origin.y) / ray.direction.y;
         if Geometry::intersects_cap(ray, t, max_radius) {
-            intersections.insert(Intersection {
+            intersections.push(Intersection {
                 t,
                 shape,
                 u: None,
@@ -704,7 +722,7 @@ impl Geometry {
         min: f64,
         max: f64,
         closed: bool,
-        intersections: &mut Intersections<'a>,
+        intersections: &mut Vec<Intersection<'a>>,
     ) {
         let o = ray.origin;
         let d = ray.direction;
@@ -720,7 +738,7 @@ impl Geometry {
                 let t0 = (-b - discriminant.sqrt()) / (2.0 * a);
                 let y0 = ray.origin.y + t0 * ray.direction.y;
                 if min < y0 && y0 < max {
-                    intersections.insert(Intersection {
+                    intersections.push(Intersection {
                         t: t0,
                         shape,
                         u: None,
@@ -731,7 +749,7 @@ impl Geometry {
                 let t1 = (-b + discriminant.sqrt()) / (2.0 * a);
                 let y1 = ray.origin.y + t1 * ray.direction.y;
                 if min < y1 && y1 < max {
-                    intersections.insert(Intersection {
+                    intersections.push(Intersection {
                         t: t1,
                         shape,
                         u: None,
@@ -750,7 +768,7 @@ impl Geometry {
         min: f64,
         max: f64,
         closed: bool,
-        intersections: &mut Intersections<'a>,
+        intersections: &mut Vec<Intersection<'a>>,
     ) {
         let o = ray.origin;
         let d = ray.direction;
@@ -766,7 +784,7 @@ impl Geometry {
                     let t0 = (-b - discriminant.sqrt()) / (2.0 * a);
                     let y0 = ray.origin.y + t0 * ray.direction.y;
                     if min < y0 && y0 < max {
-                        intersections.insert(Intersection {
+                        intersections.push(Intersection {
                             t: t0,
                             shape,
                             u: None,
@@ -777,7 +795,7 @@ impl Geometry {
                     let t1 = (-b + discriminant.sqrt()) / (2.0 * a);
                     let y1 = ray.origin.y + t1 * ray.direction.y;
                     if min < y1 && y1 < max {
-                        intersections.insert(Intersection {
+                        intersections.push(Intersection {
                             t: t1,
                             shape,
                             u: None,
@@ -786,7 +804,7 @@ impl Geometry {
                     }
                 }
             } else {
-                intersections.insert(Intersection {
+                intersections.push(Intersection {
                     t: -c / (2.0 * b),
                     shape,
                     u: None,
@@ -804,7 +822,7 @@ impl Geometry {
         p1: Vector,
         e1: Vector,
         e2: Vector,
-        intersections: &mut Intersections<'a>,
+        intersections: &mut Vec<Intersection<'a>>,
     ) {
         let dir_cross_e2 = ray.direction.cross(e2);
         let determinant = e1.dot(dir_cross_e2);
@@ -828,7 +846,7 @@ impl Geometry {
             return;
         }
 
-        intersections.insert(Intersection {
+        intersections.push(Intersection {
             t: f * e2.dot(origin_cross_e1),
             shape,
             u: Some(u),
@@ -836,7 +854,12 @@ impl Geometry {
         });
     }
 
-    pub fn intersect<'a>(&self, shape: &'a Shape, ray: Ray, intersections: &mut Intersections<'a>) {
+    pub fn intersect<'a>(
+        &self,
+        shape: &'a Shape,
+        ray: Ray,
+        intersections: &mut Vec<Intersection<'a>>,
+    ) {
         match self {
             Geometry::Sphere => Geometry::intersect_sphere(shape, ray, intersections),
             Geometry::Plane => Geometry::intersect_plane(shape, ray, intersections),
@@ -990,9 +1013,8 @@ mod tests {
             transform,
             ..ShapeArgs::default()
         });
-        let mut intersections = Intersections::new();
-        sphere.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        sphere.intersect(ray, &mut is);
 
         assert!(
             is.len() == 2
@@ -1011,9 +1033,8 @@ mod tests {
             transform,
             ..ShapeArgs::default()
         });
-        let mut intersections = Intersections::new();
-        sphere.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        sphere.intersect(ray, &mut is);
 
         assert!(is.len() == 0)
     }
@@ -1086,9 +1107,8 @@ mod tests {
     fn ray_plane_hit(origin: Vector, direction: Vector, t: f64) {
         let plane = Shape::plane(ShapeArgs::default());
         let ray = Ray { origin, direction };
-        let mut intersections = Intersections::new();
-        plane.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        plane.intersect(ray, &mut is);
 
         assert!(is.len() == 1 && is[0].t.approx(&t) && is[0].shape == &plane)
     }
@@ -1098,9 +1118,8 @@ mod tests {
     fn ray_plane_miss(origin: Vector, direction: Vector) {
         let plane = Shape::plane(ShapeArgs::default());
         let ray = Ray { origin, direction };
-        let mut intersections = Intersections::new();
-        plane.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        plane.intersect(ray, &mut is);
 
         assert!(is.len() == 0)
     }
@@ -1127,9 +1146,8 @@ mod tests {
     fn ray_cube_hit(origin: Vector, direction: Vector, t1: f64, t2: f64) {
         let cube = Shape::cube(ShapeArgs::default());
         let ray = Ray { origin, direction };
-        let mut intersections = Intersections::new();
-        cube.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        cube.intersect(ray, &mut is);
 
         assert!(
             is.len() == 2
@@ -1149,9 +1167,8 @@ mod tests {
     fn ray_cube_miss(origin: Vector, direction: Vector) {
         let cube = Shape::cube(ShapeArgs::default());
         let ray = Ray { origin, direction };
-        let mut intersections = Intersections::new();
-        cube.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        cube.intersect(ray, &mut is);
 
         assert!(is.len() == 0)
     }
@@ -1187,9 +1204,8 @@ mod tests {
             origin,
             direction: direction.normalize(),
         };
-        let mut intersections = Intersections::new();
-        cylinder.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        cylinder.intersect(ray, &mut is);
 
         assert!(
             is.len() == 2
@@ -1214,9 +1230,8 @@ mod tests {
             origin,
             direction: direction.normalize(),
         };
-        let mut intersections = Intersections::new();
-        cylinder.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        cylinder.intersect(ray, &mut is);
 
         assert!(is.len() == 0)
     }
@@ -1233,9 +1248,8 @@ mod tests {
             origin,
             direction: direction.normalize(),
         };
-        let mut intersections = Intersections::new();
-        cylinder.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        cylinder.intersect(ray, &mut is);
 
         assert!(is.len() == count)
     }
@@ -1251,9 +1265,8 @@ mod tests {
             origin,
             direction: direction.normalize(),
         };
-        let mut intersections = Intersections::new();
-        cylinder.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        cylinder.intersect(ray, &mut is);
 
         assert!(is.len() == count)
     }
@@ -1303,9 +1316,8 @@ mod tests {
             origin,
             direction: direction.normalize(),
         };
-        let mut intersections = Intersections::new();
-        cone.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        cone.intersect(ray, &mut is);
 
         assert!(
             is.len() == 2
@@ -1328,9 +1340,8 @@ mod tests {
             origin: Vector::point(0.0, 0.0, -1.0),
             direction: Vector::vector(0.0, 1.0, 1.0).normalize(),
         };
-        let mut intersections = Intersections::new();
-        cone.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        cone.intersect(ray, &mut is);
 
         assert!(is.len() == 1 && is[0].t.approx(&0.35355) && is[0].shape == &cone)
     }
@@ -1344,9 +1355,8 @@ mod tests {
             origin,
             direction: direction.normalize(),
         };
-        let mut intersections = Intersections::new();
-        cone.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        cone.intersect(ray, &mut is);
 
         assert!(is.len() == count)
     }
@@ -1375,9 +1385,8 @@ mod tests {
             origin: Vector::point(0.0, 0.5, -2.0),
             direction: Vector::vector(0.0, 0.0, 1.0),
         };
-        let mut intersections = Intersections::new();
-        triangle.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        triangle.intersect(ray, &mut is);
 
         assert!(is.len() == 1 && is[0].t.approx(&2.0) && is[0].shape == &triangle)
     }
@@ -1394,9 +1403,9 @@ mod tests {
             Vector::point(1.0, 0.0, 0.0),
         );
         let ray = Ray { origin, direction };
-        let mut intersections = Intersections::new();
-        triangle.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+
+        triangle.intersect(ray, &mut is);
 
         assert!(is.len() == 0)
     }
@@ -1422,9 +1431,8 @@ mod tests {
             direction: Vector::vector(0.0, 0.0, 1.0),
         };
         let triangle = smooth_triangle();
-        let mut intersections = Intersections::new();
-        triangle.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        triangle.intersect(ray, &mut is);
 
         assert!(is[0].u.unwrap().approx(&0.44999) && is[0].v.unwrap().approx(&0.24999))
     }
@@ -1446,9 +1454,8 @@ mod tests {
             origin: Vector::point(0.0, 0.0, 0.0),
             direction: Vector::vector(0.0, 0.0, 1.0),
         };
-        let mut intersections = Intersections::new();
-        group.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        group.intersect(ray, &mut is);
 
         assert!(is.len() == 0)
     }
@@ -1490,10 +1497,9 @@ mod tests {
             direction: Vector::vector(0.0, 0.0, 1.0),
         };
 
-        let mut intersections = Intersections::new();
-        group.intersect(ray, &mut intersections);
-        intersections.sort();
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        group.intersect(ray, &mut is);
+        Intersection::sort(&mut is);
 
         if let Element::Composite(Group { children, .. }) = &group {
             assert!(
@@ -1522,9 +1528,8 @@ mod tests {
             origin: Vector::point(10.0, 0.0, -10.0),
             direction: Vector::vector(0.0, 0.0, 1.0),
         };
-        let mut intersections = Intersections::new();
-        group.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        group.intersect(ray, &mut is);
 
         assert!(is.len() == 2)
     }
@@ -1625,6 +1630,55 @@ mod tests {
             .approx(&expected))
     }
 
+    #[test_case(GroupKind::Union       , 0, 3 ; "union"       )]
+    #[test_case(GroupKind::Intersection, 1, 2 ; "intersection")]
+    #[test_case(GroupKind::Difference  , 0, 1 ; "difference"  )]
+    fn filter_by_group(kind: GroupKind, i1: usize, i2: usize) {
+        let sphere = Shape::sphere(ShapeArgs::default());
+        let cube = Shape::cube(ShapeArgs::default());
+        let group = Group {
+            kind,
+            bbox: BoundingBox::empty(),
+            children: vec![
+                Element::Primitive(sphere.clone()),
+                Element::Primitive(cube.clone()),
+            ],
+        };
+
+        let is1 = vec![
+            Intersection {
+                t: 1.0,
+                shape: &sphere,
+                u: None,
+                v: None,
+            },
+            Intersection {
+                t: 2.0,
+                shape: &cube,
+                u: None,
+                v: None,
+            },
+            Intersection {
+                t: 3.0,
+                shape: &sphere,
+                u: None,
+                v: None,
+            },
+            Intersection {
+                t: 4.0,
+                shape: &cube,
+                u: None,
+                v: None,
+            },
+        ];
+
+        let mut is2 = is1.clone();
+
+        group.filter(&mut is2);
+
+        assert!(is2.len() == 2 && is2[0] == is1[i1] && is2[1] == is1[i2])
+    }
+
     #[test]
     fn ray_csg_miss() {
         let sphere = Element::sphere(ShapeArgs::default());
@@ -1634,9 +1688,8 @@ mod tests {
             origin: Vector::point(0.0, 2.0, -5.0),
             direction: Vector::vector(0.0, 0.0, 1.0),
         };
-        let mut intersections = Intersections::new();
-        group.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        group.intersect(ray, &mut is);
 
         assert!(is.len() == 0)
     }
@@ -1661,9 +1714,8 @@ mod tests {
             origin: Vector::point(0.0, 0.0, -5.0),
             direction: Vector::vector(0.0, 0.0, 1.0),
         };
-        let mut intersections = Intersections::new();
-        group.intersect(ray, &mut intersections);
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        group.intersect(ray, &mut is);
 
         assert!(
             is.len() == 2
