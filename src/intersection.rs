@@ -169,6 +169,11 @@ impl<'a> Intersections<'a> {
 
         let mut result = vec![];
         for intersection in &self.intersections {
+            if !group.includes(intersection.shape) {
+                result.push(*intersection);
+                continue;
+            }
+
             let left_hit = group.children[0].includes(intersection.shape);
 
             if group.kind.allows_intersection(left_hit, in_left, in_right) {
