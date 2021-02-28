@@ -1,4 +1,4 @@
-use crate::intersection::{Intersections, State};
+use crate::intersection::{Intersection, State};
 use crate::light::PointLight;
 use crate::linalg::{Matrix, Vector};
 use crate::material::{Material, Pattern};
@@ -15,17 +15,20 @@ pub struct World {
 }
 
 impl World {
-    fn intersect(&self, ray: Ray) -> Intersections {
-        let mut intersections = Intersections::new();
+    fn intersect<'a>(&'a self, ray: Ray, intersections: &mut Vec<Intersection<'a>>) {
+        intersections.clear();
 
         for element in &self.elements {
-            element.intersect(ray, &mut intersections);
+            element.intersect(ray, intersections);
         }
-
-        intersections
     }
 
-    fn is_shadowed(&self, light: PointLight, point: Vector) -> bool {
+    fn is_shadowed<'a>(
+        &'a self,
+        light: PointLight,
+        point: Vector,
+        intersections: &mut Vec<Intersection<'a>>,
+    ) -> bool {
         let vector = light.origin - point;
         let distance = vector.magnitude();
 
@@ -34,30 +37,35 @@ impl World {
             direction: vector.normalize(),
         };
 
-        let mut intersections = self.intersect(ray);
-        intersections.sort();
+        self.intersect(ray, intersections);
+        Intersection::sort(intersections);
 
-        if let Some(hit) = intersections.hit() {
+        if let Some(hit) = Intersection::hit(intersections) {
             hit.shape.casts_shadow && hit.t < distance
         } else {
             false
         }
     }
 
-    fn shade_hit(&self, state: &State, fuel: i32) -> Color {
+    fn shade_hit<'a>(
+        &'a self,
+        state: &State,
+        fuel: i32,
+        intersections: &mut Vec<Intersection<'a>>,
+    ) -> Color {
         let mut color = Color::black();
 
         for light in &self.lights {
-            let shadowed = self.is_shadowed(*light, state.over_point);
+            let shadowed = self.is_shadowed(*light, state.over_point, intersections);
 
             let surface_color =
                 state
                     .shape
                     .lighting(*light, state.over_point, state.eye, state.normal, shadowed);
 
-            let reflected_color = self.reflected_color(state, fuel);
+            let reflected_color = self.reflected_color(state, fuel, intersections);
 
-            let refracted_color = self.refracted_color(state, fuel);
+            let refracted_color = self.refracted_color(state, fuel, intersections);
 
             color += surface_color
                 + if state.shape.material.reflective > 0.0
@@ -73,7 +81,12 @@ impl World {
         color
     }
 
-    fn reflected_color(&self, state: &State, fuel: i32) -> Color {
+    fn reflected_color<'a>(
+        &'a self,
+        state: &State,
+        fuel: i32,
+        intersections: &mut Vec<Intersection<'a>>,
+    ) -> Color {
         if fuel <= 0 || state.shape.material.reflective == 0.0 {
             Color::black()
         } else {
@@ -82,13 +95,18 @@ impl World {
                 direction: state.reflect,
             };
 
-            let color = self.color_at(reflect_ray, fuel - 1);
+            let color = self.color_at(reflect_ray, fuel - 1, intersections);
 
             color * state.shape.material.reflective
         }
     }
 
-    fn refracted_color(&self, state: &State, fuel: i32) -> Color {
+    fn refracted_color<'a>(
+        &'a self,
+        state: &State,
+        fuel: i32,
+        intersections: &mut Vec<Intersection<'a>>,
+    ) -> Color {
         if fuel <= 0 || state.shape.material.transparency == 0.0 {
             Color::black()
         } else {
@@ -107,18 +125,24 @@ impl World {
                     direction,
                 };
 
-                self.color_at(refract_ray, fuel - 1) * state.shape.material.transparency
+                self.color_at(refract_ray, fuel - 1, intersections)
+                    * state.shape.material.transparency
             }
         }
     }
 
-    pub fn color_at(&self, ray: Ray, fuel: i32) -> Color {
-        let mut intersections = self.intersect(ray);
-        intersections.sort();
+    pub fn color_at<'a>(
+        &'a self,
+        ray: Ray,
+        fuel: i32,
+        intersections: &mut Vec<Intersection<'a>>,
+    ) -> Color {
+        self.intersect(ray, intersections);
+        Intersection::sort(intersections);
 
-        if let Some(hit) = intersections.hit() {
-            let state = hit.prepare_state(ray, &intersections);
-            self.shade_hit(&state, fuel)
+        if let Some(hit) = Intersection::hit(intersections) {
+            let state = hit.prepare_state(ray, intersections);
+            self.shade_hit(&state, fuel, intersections)
         } else {
             Color::black()
         }
@@ -182,9 +206,9 @@ mod tests {
             direction: Vector::vector(0.0, 0.0, 1.0),
         };
 
-        let mut intersections = world.intersect(ray);
-        intersections.sort();
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![];
+        world.intersect(ray, &mut is);
+        Intersection::sort(&mut is);
 
         assert!(
             is.len() == 4
@@ -212,9 +236,9 @@ mod tests {
             v: None,
         };
 
-        let state = i.prepare_state(ray, &Intersections::new());
+        let state = i.prepare_state(ray, &vec![]);
 
-        let color = world.shade_hit(&state, FUEL);
+        let color = world.shade_hit(&state, FUEL, &mut vec![]);
 
         assert!(color.approx(&Color::new(0.38066, 0.47583, 0.28550,)))
     }
@@ -243,9 +267,9 @@ mod tests {
             v: None,
         };
 
-        let state = i.prepare_state(ray, &Intersections::new());
+        let state = i.prepare_state(ray, &vec![]);
 
-        let color = world.shade_hit(&state, FUEL);
+        let color = world.shade_hit(&state, FUEL, &mut vec![]);
 
         assert!(color.approx(&Color::new(0.90498, 0.90498, 0.90498,)))
     }
@@ -259,7 +283,7 @@ mod tests {
             direction: Vector::vector(0.0, 1.0, 0.0),
         };
 
-        let color = world.color_at(ray, FUEL);
+        let color = world.color_at(ray, FUEL, &mut vec![]);
 
         assert!(color.approx(&Color::black()))
     }
@@ -273,7 +297,7 @@ mod tests {
             direction: Vector::vector(0.0, 0.0, 1.0),
         };
 
-        let color = world.color_at(ray, FUEL);
+        let color = world.color_at(ray, FUEL, &mut vec![]);
 
         assert!(color.approx(&Color::new(0.38066, 0.47583, 0.28550,)))
     }
@@ -313,7 +337,7 @@ mod tests {
             direction: Vector::vector(0.0, 0.0, -1.0),
         };
 
-        let color = world.color_at(ray, FUEL);
+        let color = world.color_at(ray, FUEL, &mut vec![]);
 
         assert!(color.approx(&Color::white()))
     }
@@ -323,7 +347,7 @@ mod tests {
         let world = World::default();
         let point = Vector::point(0.0, 10.0, 0.0);
 
-        assert!(!world.is_shadowed(world.lights[0], point));
+        assert!(!world.is_shadowed(world.lights[0], point, &mut vec![]));
     }
 
     #[test]
@@ -331,7 +355,7 @@ mod tests {
         let world = World::default();
         let point = Vector::point(10.0, -10.0, 10.0);
 
-        assert!(world.is_shadowed(world.lights[0], point));
+        assert!(world.is_shadowed(world.lights[0], point, &mut vec![]));
     }
 
     #[test]
@@ -339,7 +363,7 @@ mod tests {
         let world = World::default();
         let point = Vector::point(-20.0, 20.0, -20.0);
 
-        assert!(!world.is_shadowed(world.lights[0], point));
+        assert!(!world.is_shadowed(world.lights[0], point, &mut vec![]));
     }
 
     #[test]
@@ -347,7 +371,7 @@ mod tests {
         let world = World::default();
         let point = Vector::point(-2.0, 2.0, -2.0);
 
-        assert!(!world.is_shadowed(world.lights[0], point));
+        assert!(!world.is_shadowed(world.lights[0], point, &mut vec![]));
     }
 
     #[test]
@@ -381,10 +405,7 @@ mod tests {
             v: None,
         };
 
-        let color = world.shade_hit(
-            &intersection.prepare_state(ray, &Intersections::new()),
-            FUEL,
-        );
+        let color = world.shade_hit(&intersection.prepare_state(ray, &vec![]), FUEL, &mut vec![]);
 
         assert!(color.approx(&Color::new(0.1, 0.1, 0.1,)))
     }
@@ -431,9 +452,9 @@ mod tests {
             v: None,
         };
 
-        let state = intersection.prepare_state(ray, &Intersections::new());
+        let state = intersection.prepare_state(ray, &vec![]);
 
-        let color = world.reflected_color(&state, FUEL);
+        let color = world.reflected_color(&state, FUEL, &mut vec![]);
 
         assert!(color.approx(&Color::black()))
     }
@@ -465,9 +486,9 @@ mod tests {
             v: None,
         };
 
-        let state = intersection.prepare_state(ray, &Intersections::new());
+        let state = intersection.prepare_state(ray, &vec![]);
 
-        let color = world.reflected_color(&state, FUEL);
+        let color = world.reflected_color(&state, FUEL, &mut vec![]);
 
         assert!(color.approx(&Color::new(0.190332, 0.237915, 0.142749,)))
     }
@@ -499,9 +520,9 @@ mod tests {
             v: None,
         };
 
-        let state = intersection.prepare_state(ray, &Intersections::new());
+        let state = intersection.prepare_state(ray, &vec![]);
 
-        let color = world.shade_hit(&state, FUEL);
+        let color = world.shade_hit(&state, FUEL, &mut vec![]);
 
         assert!(color.approx(&Color::new(0.876757, 0.924340, 0.829174,)))
     }
@@ -541,7 +562,7 @@ mod tests {
             direction: Vector::vector(0.0, 1.0, 0.0),
         };
 
-        let result = std::panic::catch_unwind(|| world.color_at(ray, FUEL));
+        let result = std::panic::catch_unwind(|| world.color_at(ray, FUEL, &mut vec![]));
 
         assert!(result.is_ok())
     }
@@ -573,9 +594,9 @@ mod tests {
             v: None,
         };
 
-        let state = intersection.prepare_state(ray, &Intersections::new());
+        let state = intersection.prepare_state(ray, &vec![]);
 
-        let color = world.reflected_color(&state, 0);
+        let color = world.reflected_color(&state, 0, &mut vec![]);
 
         assert!(color.approx(&Color::black()))
     }
@@ -605,13 +626,11 @@ mod tests {
             v: None,
         };
 
-        let mut intersections = Intersections::new();
-        intersections.insert(i1);
-        intersections.insert(i2);
+        let is = vec![i1, i2];
 
-        let state = i1.prepare_state(ray, &intersections);
+        let state = i1.prepare_state(ray, &is);
 
-        let color = world.refracted_color(&state, 5);
+        let color = world.refracted_color(&state, 5, &mut vec![]);
 
         assert!(color.approx(&Color::black()))
     }
@@ -644,13 +663,11 @@ mod tests {
             v: None,
         };
 
-        let mut intersections = Intersections::new();
-        intersections.insert(i1);
-        intersections.insert(i2);
+        let is = vec![i1, i2];
 
-        let state = i1.prepare_state(ray, &intersections);
+        let state = i1.prepare_state(ray, &is);
 
-        let color = world.refracted_color(&state, 0);
+        let color = world.refracted_color(&state, 0, &mut vec![]);
 
         assert!(color.approx(&Color::black()))
     }
@@ -683,13 +700,11 @@ mod tests {
             v: None,
         };
 
-        let mut intersections = Intersections::new();
-        intersections.insert(i1);
-        intersections.insert(i2);
+        let is = vec![i1, i2];
 
-        let state = i2.prepare_state(ray, &intersections);
+        let state = i2.prepare_state(ray, &is);
 
-        let color = world.refracted_color(&state, 5);
+        let color = world.refracted_color(&state, 5, &mut vec![]);
 
         assert!(color.approx(&Color::black()))
     }
@@ -741,15 +756,11 @@ mod tests {
             v: None,
         };
 
-        let mut intersections = Intersections::new();
-        intersections.insert(i1);
-        intersections.insert(i2);
-        intersections.insert(i3);
-        intersections.insert(i4);
+        let is = vec![i1, i2, i3, i4];
 
-        let state = i3.prepare_state(ray, &intersections);
+        let state = i3.prepare_state(ray, &is);
 
-        let color = world.refracted_color(&state, 5);
+        let color = world.refracted_color(&state, 5, &mut vec![]);
 
         assert!(color.approx(&Color::new(0.0, 0.998874, 0.047218,)))
     }
@@ -797,12 +808,11 @@ mod tests {
             v: None,
         };
 
-        let mut intersections = Intersections::new();
-        intersections.insert(i1);
+        let is = vec![i1];
 
-        let state = i1.prepare_state(ray, &intersections);
+        let state = i1.prepare_state(ray, &is);
 
-        let color = world.shade_hit(&state, 5);
+        let color = world.shade_hit(&state, 5, &mut vec![]);
 
         assert!(color.approx(&Color::new(0.93642, 0.68642, 0.68642,)))
     }
@@ -851,12 +861,11 @@ mod tests {
             v: None,
         };
 
-        let mut intersections = Intersections::new();
-        intersections.insert(i1);
+        let is = vec![i1];
 
-        let state = i1.prepare_state(ray, &intersections);
+        let state = i1.prepare_state(ray, &is);
 
-        let color = world.shade_hit(&state, 5);
+        let color = world.shade_hit(&state, 5, &mut vec![]);
 
         assert!(color.approx(&Color::new(0.93391, 0.69643, 0.69243,)))
     }

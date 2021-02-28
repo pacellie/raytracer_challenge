@@ -1,7 +1,7 @@
 use crate::config::EPSILON;
 use crate::linalg::Vector;
 use crate::ray::Ray;
-use crate::shape::{Group, Shape};
+use crate::shape::Shape;
 
 use std::collections::HashSet;
 
@@ -47,7 +47,7 @@ pub struct Intersection<'a> {
 }
 
 impl<'a> Intersection<'a> {
-    pub fn prepare_state(self, ray: Ray, intersections: &Intersections) -> State<'a> {
+    pub fn prepare_state(self, ray: Ray, intersections: &Vec<Intersection>) -> State<'a> {
         let t = self.t;
         let shape = self.shape;
 
@@ -72,7 +72,7 @@ impl<'a> Intersection<'a> {
         let mut n1 = 1.0;
         let mut n2 = 1.0;
 
-        for intersection in &intersections.intersections {
+        for intersection in intersections {
             // `self` assumed to be the hit of `intersections`
             if self == *intersection {
                 n1 = shapes
@@ -119,6 +119,17 @@ impl<'a> Intersection<'a> {
             reflectance,
         }
     }
+
+    pub fn sort(intersections: &mut Vec<Intersection>) {
+        intersections.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap())
+    }
+
+    pub fn hit(intersections: &Vec<Intersection<'a>>) -> Option<Intersection<'a>> {
+        intersections
+            .iter()
+            .find(|intersection| intersection.t >= 0.0)
+            .map(|intersection| *intersection)
+    }
 }
 
 impl PartialEq for Intersection<'_> {
@@ -129,82 +140,15 @@ impl PartialEq for Intersection<'_> {
 
 impl Eq for Intersection<'_> {}
 
-#[derive(Debug, Clone)]
-pub struct Intersections<'a> {
-    intersections: Vec<Intersection<'a>>,
-}
-
-impl<'a> IntoIterator for Intersections<'a> {
-    type Item = Intersection<'a>;
-    type IntoIter = std::vec::IntoIter<Self::Item>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.intersections.into_iter()
-    }
-}
-
-impl<'a> Intersections<'a> {
-    pub fn new() -> Intersections<'a> {
-        Intersections {
-            intersections: vec![],
-        }
-    }
-
-    pub fn insert(&mut self, intersection: Intersection<'a>) {
-        self.intersections.push(intersection);
-    }
-
-    pub fn append(&mut self, other: &mut Intersections<'a>) {
-        self.intersections.append(&mut other.intersections);
-    }
-
-    pub fn clear(&mut self) {
-        self.intersections.clear();
-    }
-
-    pub fn sort(&mut self) {
-        self.intersections
-            .sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap())
-    }
-
-    pub fn filter_by_group(&mut self, group: &Group) {
-        let mut in_left = false;
-        let mut in_right = false;
-
-        self.intersections.retain(|intersection| {
-            let left_hit = group.children[0].includes(intersection.shape);
-            let keep = group.kind.allows_intersection(left_hit, in_left, in_right);
-
-            if left_hit {
-                in_left = !in_left;
-            } else {
-                in_right = !in_right;
-            }
-
-            keep
-        });
-    }
-
-    pub fn hit(&self) -> Option<Intersection> {
-        self.intersections
-            .iter()
-            .find(|intersection| intersection.t >= 0.0)
-            .map(|intersection| *intersection)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::approx::Approx;
-    use crate::bounding_box::BoundingBox;
     use crate::linalg::Matrix;
     use crate::material::consts::transparency::GLASS;
     use crate::material::Material;
-    use crate::shape::{Element, GroupKind, ShapeArgs};
-
-    use test_case::test_case;
+    use crate::shape::ShapeArgs;
 
     #[test]
     fn aggregating_intersections() {
@@ -224,12 +168,8 @@ mod tests {
             v: None,
         };
 
-        let mut intersections = Intersections::new();
-        intersections.insert(i2);
-        intersections.insert(i1);
-        intersections.sort();
-
-        let is: Vec<Intersection> = intersections.into_iter().collect();
+        let mut is = vec![i2, i1];
+        Intersection::sort(&mut is);
 
         assert!(
             is.len() == 2
@@ -258,12 +198,10 @@ mod tests {
             v: None,
         };
 
-        let mut is = Intersections::new();
-        is.insert(i2);
-        is.insert(i1);
-        is.sort();
+        let mut is = vec![i2, i1];
+        Intersection::sort(&mut is);
 
-        let hit = is.hit();
+        let hit = Intersection::hit(&is);
 
         assert!(hit.is_some() && hit.unwrap().t == 1.0 && hit.unwrap().shape == &sphere)
     }
@@ -286,11 +224,9 @@ mod tests {
             v: None,
         };
 
-        let mut is = Intersections::new();
-        is.insert(i2);
-        is.insert(i1);
+        let is = vec![i2, i1];
 
-        let hit = is.hit();
+        let hit = Intersection::hit(&is);
 
         assert!(hit.is_some() && hit.unwrap().t == 1.0 && hit.unwrap().shape == &sphere)
     }
@@ -327,14 +263,10 @@ mod tests {
             v: None,
         };
 
-        let mut is = Intersections::new();
-        is.insert(i1);
-        is.insert(i2);
-        is.insert(i3);
-        is.insert(i4);
-        is.sort();
+        let mut is = vec![i1, i2, i3, i4];
+        Intersection::sort(&mut is);
 
-        let hit = is.hit();
+        let hit = Intersection::hit(&is);
 
         assert!(hit.is_some() && hit.unwrap().t == 2.0 && hit.unwrap().shape == &sphere)
     }
@@ -357,11 +289,9 @@ mod tests {
             v: None,
         };
 
-        let mut is = Intersections::new();
-        is.insert(i2);
-        is.insert(i1);
+        let is = vec![i2, i1];
 
-        let hit = is.hit();
+        let hit = Intersection::hit(&is);
 
         assert!(hit.is_none())
     }
@@ -382,7 +312,7 @@ mod tests {
             v: None,
         };
 
-        let state = i.prepare_state(ray, &Intersections::new());
+        let state = i.prepare_state(ray, &vec![]);
 
         assert!(
             state.t.approx(&i.t)
@@ -409,7 +339,7 @@ mod tests {
             v: None,
         };
 
-        let state = i.prepare_state(ray, &Intersections::new());
+        let state = i.prepare_state(ray, &vec![]);
 
         assert!(!state.inside)
     }
@@ -430,7 +360,7 @@ mod tests {
             v: None,
         };
 
-        let state = i.prepare_state(ray, &Intersections::new());
+        let state = i.prepare_state(ray, &vec![]);
 
         assert!(
             state.point.approx(&Vector::point(0.0, 0.0, 1.0))
@@ -459,7 +389,7 @@ mod tests {
             v: None,
         };
 
-        let state = intersection.prepare_state(ray, &Intersections::new());
+        let state = intersection.prepare_state(ray, &vec![]);
 
         assert!(state.over_point.z < -EPSILON / 2.0 && state.over_point.z < state.point.z)
     }
@@ -480,7 +410,7 @@ mod tests {
             v: None,
         };
 
-        let state = intersection.prepare_state(ray, &Intersections::new());
+        let state = intersection.prepare_state(ray, &vec![]);
 
         assert!(state.reflect.approx(&Vector::vector(
             0.0,
@@ -563,13 +493,7 @@ mod tests {
             v: None,
         };
 
-        let mut is = Intersections::new();
-        is.insert(i1);
-        is.insert(i2);
-        is.insert(i3);
-        is.insert(i4);
-        is.insert(i5);
-        is.insert(i6);
+        let is = vec![i1, i2, i3, i4, i5, i6];
 
         let state1 = i1.prepare_state(ray, &is.clone());
         let state2 = i2.prepare_state(ray, &is.clone());
@@ -613,7 +537,7 @@ mod tests {
             v: None,
         };
 
-        let state = intersection.prepare_state(ray, &Intersections::new());
+        let state = intersection.prepare_state(ray, &vec![]);
 
         assert!(state.under_point.z > EPSILON / 2.0 && state.point.z < state.under_point.z)
     }
@@ -649,11 +573,9 @@ mod tests {
             v: None,
         };
 
-        let mut intersections = Intersections::new();
-        intersections.insert(i1);
-        intersections.insert(i2);
+        let is = vec![i1, i2];
 
-        let state = i2.prepare_state(ray, &intersections);
+        let state = i2.prepare_state(ray, &is);
 
         let reflectance = state.reflectance;
 
@@ -690,11 +612,9 @@ mod tests {
             v: None,
         };
 
-        let mut intersections = Intersections::new();
-        intersections.insert(i1);
-        intersections.insert(i2);
+        let is = vec![i1, i2];
 
-        let state = i2.prepare_state(ray, &intersections);
+        let state = i2.prepare_state(ray, &is);
 
         let reflectance = state.reflectance;
 
@@ -724,67 +644,12 @@ mod tests {
             v: None,
         };
 
-        let mut intersections = Intersections::new();
-        intersections.insert(i1);
+        let is = vec![i1];
 
-        let state = i1.prepare_state(ray, &intersections);
+        let state = i1.prepare_state(ray, &is);
 
         let reflectance = state.reflectance;
 
         assert!(reflectance.approx(&0.48873))
-    }
-
-    #[test_case(GroupKind::Union       , 0, 3 ; "union"       )]
-    #[test_case(GroupKind::Intersection, 1, 2 ; "intersection")]
-    #[test_case(GroupKind::Difference  , 0, 1 ; "difference"  )]
-    fn filter_by_group(kind: GroupKind, i1: usize, i2: usize) {
-        let sphere = Shape::sphere(ShapeArgs::default());
-        let cube = Shape::cube(ShapeArgs::default());
-        let group = Group {
-            kind,
-            bbox: BoundingBox::empty(),
-            children: vec![
-                Element::Primitive(sphere.clone()),
-                Element::Primitive(cube.clone()),
-            ],
-        };
-
-        let is1 = vec![
-            Intersection {
-                t: 1.0,
-                shape: &sphere,
-                u: None,
-                v: None,
-            },
-            Intersection {
-                t: 2.0,
-                shape: &cube,
-                u: None,
-                v: None,
-            },
-            Intersection {
-                t: 3.0,
-                shape: &sphere,
-                u: None,
-                v: None,
-            },
-            Intersection {
-                t: 4.0,
-                shape: &cube,
-                u: None,
-                v: None,
-            },
-        ];
-
-        let mut intersections = Intersections::new();
-        intersections.insert(is1[0]);
-        intersections.insert(is1[1]);
-        intersections.insert(is1[2]);
-        intersections.insert(is1[3]);
-
-        intersections.filter_by_group(&group);
-        let is2: Vec<Intersection> = intersections.into_iter().collect();
-
-        assert!(is2.len() == 2 && is2[0] == is1[i1] && is2[1] == is1[i2])
     }
 }

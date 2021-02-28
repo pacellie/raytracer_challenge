@@ -1,8 +1,10 @@
 use crate::camera::Camera;
 use crate::color::Color;
 use crate::config::FUEL;
+// use crate::intersection::Intersection;
 use crate::world::World;
 
+// use crossbeam;
 use rayon::prelude::*;
 
 #[derive(Debug)]
@@ -21,32 +23,53 @@ impl Image {
         }
     }
 
-    pub fn render(camera: Camera, world: &World) -> Image {
-        let mut pixels = vec![];
+    // pub fn render<'a>(
+    //     pixels: &mut [Color],
+    //     intersections: &mut Vec<Intersection<'a>>,
+    //     camera: &Camera,
+    //     world: &'a World,
+    //     offset: usize,
+    // ) {
+    //     for i in 0..pixels.len() {
+    //         let j = i + offset;
+    //         let x = j % camera.hsize;
+    //         let y = j / camera.hsize;
+    //         let ray = camera.ray_at_pixel(x, y);
+    //         pixels[i] = world.color_at(ray, FUEL, intersections);
+    //     }
+    // }
 
-        for y in 0..camera.vsize {
-            for x in 0..camera.hsize {
-                let ray = camera.ray_at_pixel(x, y);
-                let color = world.color_at(ray, FUEL);
-                pixels.push(color);
-            }
-        }
+    // pub fn par_render(camera: &Camera, world: &World) -> Image {
+    //     let n = camera.hsize * camera.vsize;
+    //     let threads = 64;
+    //     let chunk_size = n / threads;
 
-        Image {
-            hsize: camera.hsize,
-            vsize: camera.vsize,
-            pixels,
-        }
-    }
+    //     let mut pixels = vec![Color::black(); n];
+    //     let chunks: Vec<&mut [Color]> = pixels.chunks_mut(chunk_size).collect();
 
-    pub fn par_render(camera: Camera, world: &World) -> Image {
+    //     let _ = crossbeam::scope(|spawner| {
+    //         for (i, chunk) in chunks.into_iter().enumerate() {
+    //             spawner.spawn(move |_| {
+    //                 Image::render(chunk, &mut vec![], camera, world, i * chunk_size);
+    //             });
+    //         }
+    //     });
+
+    //     Image {
+    //         hsize: camera.hsize,
+    //         vsize: camera.vsize,
+    //         pixels,
+    //     }
+    // }
+
+    pub fn par_render(camera: &Camera, world: &World) -> Image {
         let pixels: Vec<Color> = (0..(camera.hsize * camera.vsize))
             .into_par_iter()
             .map(|i| {
                 let x = i % camera.hsize;
                 let y = i / camera.hsize;
                 let ray = camera.ray_at_pixel(x, y);
-                world.color_at(ray, FUEL)
+                world.color_at(ray, FUEL, &mut vec![])
             })
             .collect();
 
@@ -115,7 +138,7 @@ mod tests {
 
         let world = World::default();
 
-        let image = Image::render(camera, &world);
+        let image = Image::par_render(&camera, &world);
 
         assert!(image
             .read(5, 5)
