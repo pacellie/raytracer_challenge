@@ -154,6 +154,10 @@ impl<'a> Intersections<'a> {
         self.intersections.push(intersection);
     }
 
+    pub fn append(&mut self, other: &mut Intersections<'a>) {
+        self.intersections.append(&mut other.intersections);
+    }
+
     pub fn clear(&mut self) {
         self.intersections.clear();
     }
@@ -167,27 +171,18 @@ impl<'a> Intersections<'a> {
         let mut in_left = false;
         let mut in_right = false;
 
-        let mut result = vec![];
-        for intersection in &self.intersections {
-            if !group.includes(intersection.shape) {
-                result.push(*intersection);
-                continue;
-            }
-
+        self.intersections.retain(|intersection| {
             let left_hit = group.children[0].includes(intersection.shape);
-
-            if group.kind.allows_intersection(left_hit, in_left, in_right) {
-                result.push(*intersection);
-            }
+            let keep = group.kind.allows_intersection(left_hit, in_left, in_right);
 
             if left_hit {
                 in_left = !in_left;
             } else {
                 in_right = !in_right;
             }
-        }
 
-        self.intersections = result;
+            keep
+        });
     }
 
     pub fn hit(&self) -> Option<Intersection> {

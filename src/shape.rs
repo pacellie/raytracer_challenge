@@ -231,16 +231,21 @@ impl Group {
         // intersect_bbox(&self.bbox, &DEBUG, ray, intersections);
 
         if self.bbox.intersects(ray) {
-            for child in &self.children {
-                child.intersect(ray, intersections);
-            }
-        }
-
-        match self.kind {
-            GroupKind::Aggregation => (),
-            _ => {
-                intersections.sort();
-                intersections.filter_by_group(self);
+            match self.kind {
+                GroupKind::Aggregation => {
+                    for child in &self.children {
+                        child.intersect(ray, intersections);
+                    }
+                }
+                _ => {
+                    let mut tmp = Intersections::new();
+                    for child in &self.children {
+                        child.intersect(ray, &mut tmp);
+                    }
+                    tmp.sort();
+                    tmp.filter_by_group(self);
+                    intersections.append(&mut tmp);
+                }
             }
         }
     }
